@@ -2234,6 +2234,9 @@ impl BgpVrf {
                 // instance (it is handed the global `tx`); per-VRF tasks
                 // never see `MupC`.
             }
+            // Neighbor-state subscriptions cover the default instance
+            // only; nothing routes them to a VRF task.
+            Message::NeighborWatch(_) => {}
             Message::Relisten => {
                 // `router bgp port` is a global-instance knob; only the
                 // global event loop queues (and handles) Relisten.

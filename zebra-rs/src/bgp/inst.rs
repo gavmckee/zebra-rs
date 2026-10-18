@@ -124,6 +124,9 @@ pub enum Message {
     /// sync; handled directly in [`Bgp::event_loop`], which awaits
     /// [`Bgp::relisten`].
     Relisten,
+    /// Register a neighbor-state subscriber (`zebra.bgp.v1`); see
+    /// [`super::watch::NeighborWatch`].
+    NeighborWatch(mpsc::Sender<super::watch::pb::NeighborEvent>),
     /// An Ethernet Segment's startup hold (`ethernet-segment <name>
     /// df-election startup-delay`) elapsed: put its ES routes back on the
     /// wire and re-run DF election for the VPWS services on it. Sent by the
@@ -1065,6 +1068,8 @@ pub struct Bgp {
     /// do not advertise such segments on egress.
     pub as_sets_withdraw: bool,
     pub peers: PeerMap,
+    /// Neighbor-state subscribers (`zebra.bgp.v1.WatchNeighbors`).
+    pub neighbor_watch: super::watch::NeighborWatch,
     /// Instance-level BFD defaults (`router bgp { bfd {} }`), inherited by
     /// every neighbor and overridden per neighbor (see
     /// [`super::peer::PeerBfdConfig::resolve`]).
@@ -1601,6 +1606,7 @@ impl Bgp {
             fast_external_failover: true,
             as_sets_withdraw: true,
             peers: PeerMap::new(),
+            neighbor_watch: Default::default(),
             bfd: PeerBfdConfig::default(),
             tx,
             rx,
@@ -2934,6 +2940,9 @@ impl Bgp {
                     MupCEvent::Listener { .. } | MupCEvent::AssocUp { .. } => {}
                 }
                 self.mup_c_view.apply(ev);
+            }
+            Message::NeighborWatch(tx) => {
+                self.neighbor_watch.add(&self.peers, tx);
             }
             Message::Relisten => {
                 // Intercepted in `event_loop` before this dispatcher
@@ -7767,6 +7776,9 @@ impl Bgp {
         self.evpn_dad_drain();
         self.label_chunk_upkeep();
         self.etree_role_drain();
+        // Runs before every event: whatever the previous one changed in
+        // a session reaches subscribers before the next is processed.
+        self.neighbor_watch.upkeep(&self.peers);
     }
 
     pub async fn event_loop(&mut self) {

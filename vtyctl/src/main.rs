@@ -10,6 +10,7 @@ pub mod endpoint;
 pub mod mcp;
 pub mod show;
 pub mod watch;
+pub mod watch_bgp;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -67,6 +68,15 @@ enum Commands {
 
         #[arg(help = "Show command to execute")]
         command: String,
+    },
+    /// Stream BGP neighbor state changes (zebra.bgp.v1 WatchNeighbors)
+    WatchBgpNeighbors {
+        #[arg(
+            short = 'H',
+            long,
+            help = "Server endpoint URI (overrides --vty-socket)"
+        )]
+        host: Option<String>,
     },
     #[command(disable_help_flag = true)]
     Watch {
@@ -128,6 +138,7 @@ fn print_help() {
     eprintln!("  clear       Clear commands.");
     eprintln!("  show        Show commands.");
     eprintln!("  watch       Watch running-config commits.");
+    eprintln!("  watch-bgp-neighbors  Watch BGP neighbor state changes.");
     eprintln!("  mcp         Start MCP server for AI assistant integration.");
 }
 
@@ -152,6 +163,9 @@ async fn main() -> Result<()> {
             command,
         }) => {
             show::show(endpoint(host, &cli.vty_socket), command, *json).await?;
+        }
+        Some(Commands::WatchBgpNeighbors { host }) => {
+            watch_bgp::watch_bgp_neighbors(endpoint(host, &cli.vty_socket)).await?;
         }
         Some(Commands::Watch { host, json, path }) => {
             watch::watch(endpoint(host, &cli.vty_socket), *json, path.clone()).await?;

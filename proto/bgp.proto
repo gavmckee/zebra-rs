@@ -1,0 +1,55 @@
+// Copyright 2026 Zebra Project.
+
+syntax = "proto3";
+
+// BGP operational state for machine consumers. Like `zebra.config.v1`
+// this is a northbound API that versions independently of the vty
+// session protocol, served on the same gRPC endpoint as the vty
+// services.
+package zebra.bgp.v1;
+
+message WatchNeighborsRequest {}
+
+// One neighbor of the default BGP instance, as `show bgp neighbor`
+// reports it.
+message Neighbor {
+  // Remote address; for an interface (unnumbered) neighbor, the
+  // currently known remote address.
+  string address = 1;
+  // Interface of an interface neighbor; empty otherwise.
+  string interface = 2;
+  uint32 remote_as = 3;
+  // "internal" or "external".
+  string peer_type = 4;
+  // FSM state: Idle, Connect, Active, OpenSent, OpenConfirm,
+  // Established.
+  string state = 5;
+  // Why the session last left Established ("Hold timer expired",
+  // "NOTIFICATION received", ...); empty if it never has.
+  string last_reset = 6;
+}
+
+message NeighborEvent {
+  // True on the first event of a subscription, and again whenever the
+  // BGP instance (re)starts: `neighbors` is then the complete set and
+  // replaces whatever the client holds. Sent even when empty.
+  bool snapshot = 1;
+  // Snapshot: every neighbor. Otherwise: neighbors added or whose
+  // state, remote AS, peer type or last reset changed.
+  repeated Neighbor neighbors = 2;
+  // Neighbors no longer configured (address and interface set).
+  repeated Neighbor removed = 3;
+}
+
+// Neighbor state subscription.
+//
+// WatchNeighbors opens a snapshot-then-deltas stream: one snapshot,
+// then an event as soon as a neighbor's session changes state (or a
+// neighbor is added or removed). There is no polling interval: the
+// event is produced by the BGP task as it processes the change. A
+// subscriber that stops reading long enough to fill its server-side
+// buffer is disconnected; reconnect and resync from the fresh
+// snapshot. The stream ends when the BGP instance is removed.
+service BgpService {
+  rpc WatchNeighbors(WatchNeighborsRequest) returns (stream NeighborEvent) {}
+}

@@ -179,6 +179,10 @@ pub enum Message {
     /// the snapshot event and keeps the sender until the client goes
     /// away.
     ConfigSubscribe(ConfigSubscribeRequest),
+    /// Register an external gRPC subscriber to BGP neighbor state
+    /// (`zebra.bgp.v1.BgpService/WatchNeighbors`). Forwarded to the BGP
+    /// task, or parked until BGP starts (with an empty snapshot meanwhile).
+    BgpNeighborWatch(mpsc::Sender<crate::bgp::watch::pb::NeighborEvent>),
     /// Register an external show provider (`zebra.show.v1`) under a
     /// top-level show routing key ("firewall", "ipsec", …), replacing
     /// any previous holder of that name.

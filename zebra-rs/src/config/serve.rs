@@ -810,6 +810,7 @@ pub fn serve(cli: Cli, addr: VtyAddr) -> anyhow::Result<()> {
     // they carry no role-gated operations, so there is no session to
     // resolve.
     let config_service = ConfigSubscribeService { tx: cli.tx.clone() };
+    let bgp_watch = crate::bgp::watch::BgpWatchService { tx: cli.tx.clone() };
     let show_provider = ShowProviderBridge { tx: cli.tx.clone() };
     let machine_interceptor = MachinePeerInterceptor::from_env();
 
@@ -851,6 +852,10 @@ pub fn serve(cli: Cli, addr: VtyAddr) -> anyhow::Result<()> {
         ))
         .add_service(ConfigServiceServer::with_interceptor(
             config_service,
+            machine_interceptor.clone(),
+        ))
+        .add_service(crate::bgp::watch::BgpServiceServer::with_interceptor(
+            bgp_watch,
             machine_interceptor.clone(),
         ))
         .add_service(ShowProviderServiceServer::with_interceptor(

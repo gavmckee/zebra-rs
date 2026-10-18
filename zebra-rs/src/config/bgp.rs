@@ -79,6 +79,12 @@ pub fn spawn_bgp(config: &ConfigManager) {
     // this by value, so `commit_config` pre-spawns BGP before IS-IS when
     // both land in one commit (mirrors the `bfd_client_tx` contract).
     *config.bgp_tx.borrow_mut() = Some(bgp.tx.clone());
+    // Neighbor-state subscribers that arrived before BGP: each gets a
+    // fresh snapshot from the new instance.
+    let mut bgp = bgp;
+    for tx in config.bgp_neighbor_watchers.borrow_mut().drain(..) {
+        bgp.neighbor_watch.add(&bgp.peers, tx);
+    }
     config.subscribe("bgp", bgp.cm.tx.clone());
     config.subscribe_show("bgp", bgp.show.tx.clone());
     let task = inst::serve(bgp);

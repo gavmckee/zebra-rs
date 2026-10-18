@@ -27,6 +27,7 @@ pub mod update_group;
 pub mod vpws;
 pub mod vrf;
 pub mod vrf_config;
+pub mod watch;
 
 pub mod color_policy;
 

@@ -250,6 +250,9 @@ pub struct ConfigManager {
     /// channel is closed (client gone) or full (client not reading)
     /// is dropped — the client resyncs by resubscribing.
     pub config_subscribers: RefCell<Vec<ConfigSubscriber>>,
+    /// BGP neighbor-state subscribers waiting for a BGP task: handed to it
+    /// by [`super::bgp::spawn_bgp`].
+    pub bgp_neighbor_watchers: RefCell<Vec<mpsc::Sender<crate::bgp::watch::pb::NeighborEvent>>>,
     pub show_clients: RefCell<HashMap<String, UnboundedSender<DisplayRequest>>>,
     /// Per-instance show channels keyed `"<proto>:vrf:<name>"`. Populated
     /// at runtime as protocols spawn VRF tasks (via
@@ -474,6 +477,7 @@ impl ConfigManager {
             rx,
             cm_clients: RefCell::new(HashMap::new()),
             config_subscribers: RefCell::new(Vec::new()),
+            bgp_neighbor_watchers: RefCell::new(Vec::new()),
             show_clients: RefCell::new(HashMap::new()),
             show_vrf_clients: RefCell::new(HashMap::new()),
             bgp_tx: RefCell::new(None),
@@ -1894,6 +1898,29 @@ impl ConfigManager {
                     && current.same_channel(&tx)
                 {
                     clients.remove(&name);
+                }
+            }
+            Message::BgpNeighborWatch(tx) => {
+                let running = self.protocol_tasks.borrow().contains_key("bgp");
+                match self.bgp_tx.borrow().clone() {
+                    Some(bgp) if running => {
+                        // The BGP inbox is bounded; don't block the
+                        // manager on it.
+                        tokio::spawn(async move {
+                            let _ = bgp.send(crate::bgp::inst::Message::NeighborWatch(tx)).await;
+                        });
+                    }
+                    _ => {
+                        let empty = crate::bgp::watch::pb::NeighborEvent {
+                            snapshot: true,
+                            ..Default::default()
+                        };
+                        if tx.try_send(empty).is_ok() {
+                            let mut parked = self.bgp_neighbor_watchers.borrow_mut();
+                            parked.retain(|t| !t.is_closed());
+                            parked.push(tx);
+                        }
+                    }
                 }
             }
             Message::ConfigSubscribe(req) => {
