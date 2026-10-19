@@ -2322,9 +2322,7 @@ impl Bgp {
             self.policy_tx.clone(),
             self.bfd_client_tx.clone(),
         );
-        self.seed_mup_segment_catalog(&new_handle);
-        self.register_vrf_show(name, &new_handle);
-        self.vrf_registry.insert(name.to_string(), new_handle);
+        self.adopt_vrf_task(name, new_handle);
         // Re-seed the respawned VRF with the colour-steering snapshot.
         self.broadcast_colour_steering();
         bgp_srv6_trace!(self.tracing, vrf = %name, "bgp: reconciled SRv6 service SID for VRF");
@@ -3034,6 +3032,21 @@ impl Bgp {
         super::update_group::id_comps(&self.update_groups)
     }
 
+    /// Install a freshly spawned (or respawned) task for VRF `name`. The
+    /// new task holds no imported routes, and an import is otherwise sent
+    /// only when a route arrives or the VRF's import RTs change — a change
+    /// that finds no task (the RIB's `VrfRouteTargets` drawn ahead of the
+    /// commit that spawns it) imports nothing. So replay every held route
+    /// the VRF's current import RTs match, as an RT change from none would.
+    fn adopt_vrf_task(&mut self, name: &str, handle: super::vrf::BgpVrfHandle) {
+        self.seed_mup_segment_catalog(&handle);
+        self.register_vrf_show(name, &handle);
+        self.vrf_registry.insert(name.to_string(), handle);
+        let none = std::collections::BTreeSet::new();
+        self.reimport_vrf_v4(name, &none);
+        self.reimport_vrf_v6(name, &none);
+    }
+
     /// Reconcile [`Self::vrfs`] (desired set, populated by per-VRF
     /// config callbacks) against [`Self::vrf_registry`] (running
     /// set): spawn the additions, despawn the removals. Called from
@@ -3175,9 +3188,7 @@ impl Bgp {
                 self.policy_tx.clone(),
                 self.bfd_client_tx.clone(),
             );
-            self.seed_mup_segment_catalog(&handle);
-            self.register_vrf_show(&name, &handle);
-            self.vrf_registry.insert(name, handle);
+            self.adopt_vrf_task(&name, handle);
         }
         // Seed every (including newly-spawned) VRF with the current
         // colour-steering snapshot so SRv6 L3VPN routes steer from the
@@ -3638,9 +3649,7 @@ impl Bgp {
             self.policy_tx.clone(),
             self.bfd_client_tx.clone(),
         );
-        self.seed_mup_segment_catalog(&new_handle);
-        self.register_vrf_show(name, &new_handle);
-        self.vrf_registry.insert(name.to_string(), new_handle);
+        self.adopt_vrf_task(name, new_handle);
         bgp_vrf_trace!(
             self.tracing,
             vrf = %name,
@@ -6302,9 +6311,7 @@ impl Bgp {
             self.policy_tx.clone(),
             self.bfd_client_tx.clone(),
         );
-        self.seed_mup_segment_catalog(&new_handle);
-        self.register_vrf_show(name, &new_handle);
-        self.vrf_registry.insert(name.to_string(), new_handle);
+        self.adopt_vrf_task(name, new_handle);
         bgp_label_trace!(self.tracing, vrf = %name, label, "bgp: assigned dynamic label to VRF");
     }
 

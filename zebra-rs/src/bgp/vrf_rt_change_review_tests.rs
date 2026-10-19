@@ -95,27 +95,8 @@ struct Rts<'a> {
 /// Register VRF `name` (RD `rd`) with the instance — its task handle, its
 /// RT sets, its config — and return the receiving end of its inbox.
 fn add_vrf(bgp: &mut Bgp, name: &str, rd: &str, rts_: Rts) -> VrfRx {
-    let (inbox, rx) = mpsc::unbounded_channel();
-    let (show_tx, show_rx) = mpsc::unbounded_channel();
-    Box::leak(Box::new(show_rx));
-    bgp.vrf_registry.insert(
-        name.to_string(),
-        crate::bgp::vrf::BgpVrfHandle {
-            inbox,
-            router_id: ROUTER_ID,
-            asn: 65000,
-            bfd_client_tx: None,
-            bfd_client: String::new(),
-            show_tx,
-            task: Task::spawn(async {}),
-            label: 100,
-            ilm_decap_ifindex: None,
-            srv6_sid: None,
-            rd: Some(rt(rd)),
-            evpn_advertise_v4: false,
-            evpn_advertise_v6: false,
-        },
-    );
+    let (handle, rx) = vrf_task(rd);
+    bgp.vrf_registry.insert(name.to_string(), handle);
     bgp.rib_known_vrfs.insert(
         name.to_string(),
         RibKnownVrf {
@@ -132,6 +113,29 @@ fn add_vrf(bgp: &mut Bgp, name: &str, rd: &str, rts_: Rts) -> VrfRx {
     };
     bgp.vrfs.insert(name.to_string(), cfg);
     rx
+}
+
+/// A stand-in VRF task handle (RD `rd`) and the receiving end of its inbox.
+fn vrf_task(rd: &str) -> (crate::bgp::vrf::BgpVrfHandle, VrfRx) {
+    let (inbox, rx) = mpsc::unbounded_channel();
+    let (show_tx, show_rx) = mpsc::unbounded_channel();
+    Box::leak(Box::new(show_rx));
+    let handle = crate::bgp::vrf::BgpVrfHandle {
+        inbox,
+        router_id: ROUTER_ID,
+        asn: 65000,
+        bfd_client_tx: None,
+        bfd_client: String::new(),
+        show_tx,
+        task: Task::spawn(async {}),
+        label: 100,
+        ilm_decap_ifindex: None,
+        srv6_sid: None,
+        rd: Some(rt(rd)),
+        evpn_advertise_v4: false,
+        evpn_advertise_v6: false,
+    };
+    (handle, rx)
 }
 
 /// A committed RT change for VRF `name`, as the RIB delivers it.
@@ -1047,5 +1051,68 @@ async fn vpnv6_export_rt_change_re_tags_the_route_toward_addpath_neighbors() {
         held_rts_v6(&bgp, c, "65000:1", "2001:db8:24:5::/64"),
         vec!["65000:300".to_string()],
         "the AddPath neighbor holds the re-tagged route"
+    );
+}
+
+/// The VRF's import RTs reach the instance (the RIB's `VrfRouteTargets`)
+/// before the commit that spawns its task, while Type-5 routes matching
+/// them are already held — a VRF configured after its fabric session came
+/// up. The RT change finds no task to import into, so the task, once
+/// spawned, must still be given the held routes; before, it held none
+/// until each route was re-advertised.
+#[tokio::test]
+async fn vrf_spawned_after_its_rts_imports_the_held_type5_routes() {
+    let mut bgp = fresh_bgp();
+    let rd = rt("65000:9");
+    let attr = vpn_attr(
+        BgpNexthop::Ipv4("10.0.0.2".parse().unwrap()),
+        &["65000:200"],
+    );
+    for prefix in ["192.0.2.0/24", "2001:db8:2::/64"] {
+        let rib = BgpRib::new(
+            2,
+            "10.0.0.2".parse().unwrap(),
+            BgpRibType::IBGP,
+            0,
+            0,
+            &attr,
+            Some(Label::new(100, 0, true)),
+            None,
+            false,
+        );
+        bgp.local_rib.update_evpn(
+            rd,
+            bgp_packet::EvpnPrefix::IpPrefix {
+                eth_tag: 0,
+                prefix: prefix.parse().unwrap(),
+            },
+            rib,
+        );
+    }
+    bgp.vrfs.insert(
+        "blue".to_string(),
+        BgpVrfConfig {
+            rd: Some(rt("65000:2")),
+            ..Default::default()
+        },
+    );
+    set_rts(
+        &mut bgp,
+        "blue",
+        Rts {
+            import_v4: &["65000:200"],
+            import_v6: &["65000:200"],
+            ..Default::default()
+        },
+    );
+    let (handle, mut blue) = vrf_task("65000:2");
+    bgp.adopt_vrf_task("blue", handle);
+    assert_eq!(
+        told(&mut blue),
+        vec![
+            ("import", rd.to_string(), "192.0.2.0/24".to_string()),
+            ("import", rd.to_string(), "2001:db8:2::/64".to_string()),
+        ],
+        "a VRF task spawned after its RTs landed must import the held routes"
     );
 }
